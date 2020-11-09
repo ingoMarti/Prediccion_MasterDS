@@ -1,0 +1,271 @@
+---
+title: "Informe PISA"
+author: "Inigo Martiarena Conde"
+date: "11/9/2020"
+output: 
+  html_document: default
+  pdf_document: default
+---
+## Objetivo
+
+El objetivo del informe es modelizar la relación entre la puntuación media (OSS) y el resto de variables del dataset _pisasci2006.csv_ utilizando modelos de splines y GAM. Se debe realizar CV cuando se pueda.
+
+El dataset _pisasci2006.csv_ es la puntuación media en Ciencias por país del Programa para la Evaluación Internacional de Estudiantes. Este dataset en concreto, pertenece al año 2016. En el dataset tambien aparece el GNI per cápita (paridad del poder adquisitivo, dólares de 2005), el índice educativo, el índice de salud y el índice de desarrollo humano de la ONU (HDI)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
++ Seleccionamos las librerias necesarias para el estudio:
+  - rmarkdown
+  - dplyr
+  - ggplot2
+  - skimr
+  - janitor
+  - psych
+  - mgcv
+
+```{r Libraries, message = FALSE}
+
+library(rmarkdown)
+library(dplyr)
+library(here)
+library(ggplot2)
+library(skimr)
+library(janitor)
+library(psych)
+library(mgcv)
+
+```
+
++ Cargamos la base de datos _pisasci2006.csv_
+
+```{r Dataset, echo=FALSE}
+
+pisa <- read.csv('./pisasci2006.csv')
+head(pisa)
+
+```
+
++ Realizamos un breve analisis exploratorio de los datos: estructura, duplicados, valores NA
+
+```{r EDA, echo = TRUE, message = FALSE}
+
+str(pisa)
+length(unique(pisa$Country))
+length(pisa$Country)
+
+
+```
++ Seleccionamos las columans que tengan valores NA
++ Transformamos el dataset original por la cantidad de NA que aparecen. Les atribuimos el valor medio de su columna
+
+```{r Transformation I, echo=FALSE}
+list_na <- colnames(pisa)[ apply(pisa, 2, anyNA) ]
+list_na
+average_missing <- apply(pisa[,colnames(pisa) %in% list_na],
+      2,
+      mean,
+      na.rm =  TRUE)
+average_missing
+
+```
+
+```{r Transformation II, echo=FALSE}
+
+pisaFull <- pisa %>%
+   mutate(Overall = ifelse(is.na(Overall), average_missing[1], Overall),
+          Issues = ifelse(is.na(Issues), average_missing[2], Issues),
+          Explain = ifelse(is.na(Explain), average_missing[3], Explain),
+          Evidence  = ifelse(is.na(Evidence), average_missing[4], Evidence),
+          Interest  = ifelse(is.na(Interest), average_missing[5], Interest),
+          Support  = ifelse(is.na(Support), average_missing[6], Support),
+          Income  = ifelse(is.na(Income), average_missing[7], Income),
+          Health  = ifelse(is.na(Health), average_missing[8], Health),
+          Edu  = ifelse(is.na(Edu), average_missing[9], Edu),
+          HDI  = ifelse(is.na(HDI), average_missing[10], HDI))
+head(pisaFull)
+
+```
+
++ Resumen del nuevo dataset
+
+```{r Updated dataframe}
+
+skim(pisaFull)
+
+```
++ Analizamos la linealidad de las variables con _Overall_
+
+```{r}
+
+par(mfrow = c(3,3))
+
+plot(pisaFull$Issues, pisaFull$Overall)
+plot(pisaFull$Explain, pisaFull$Overall)
+plot(pisaFull$Evidence, pisaFull$Overall)
+plot(pisaFull$Interest, pisaFull$Overall)
+plot(pisaFull$Support, pisaFull$Overall)
+plot(pisaFull$Income, pisaFull$Overall)
+plot(pisaFull$Health, pisaFull$Overall)
+plot(pisaFull$Edu, pisaFull$Overall)
+plot(pisaFull$HDI, pisaFull$Overall)
+
+par(mfrow = c(1,1))
+
+
+```
+
+
+```{r}
+```
+
++ Correlaciones e histogrmas de las variables
+
+```{r Correlations}
+
+pairs.panels(pisaFull, scale=TRUE)
+
+```
+
++ Analizamos variable por variable el mejor modelo que se ajuste con _Overall_.
++ Obtenemos los grados de libertad de cada una de las varibales,
+
+```{r Overall}
+
+overall <- smooth.spline(x = pisaFull$Overall, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Issues}
+
+issues <- smooth.spline(x = pisaFull$Issues, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Explain}
+
+explain <- smooth.spline(x = pisaFull$Explain, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Evidence}
+
+evidence <- smooth.spline(x = pisaFull$Evidence, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Interest}
+
+interest <- smooth.spline(x = pisaFull$Interest, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Support}
+
+support <- smooth.spline(x = pisaFull$Support, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Income}
+
+income <- smooth.spline(x = pisaFull$Income, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r Health}
+
+health <- smooth.spline(x = pisaFull$Health, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+```{r Edu}
+
+edu <- smooth.spline(x = pisaFull$Edu, y = pisaFull$Overall, cv = TRUE)
+
+```
+
+
+```{r HDI}
+
+hdi <- smooth.spline(x = pisaFull$HDI, y = pisaFull$Overall, cv = TRUE)
+
+```
+
++ Agrupamos los grados libertad de las variables clave en una unica lista  
+
+```{r df list}
+
+gl <- list(cbind(interest$df, income$df, support$df, health$df, edu$df, hdi$df), 
+      col.names = c('interest', 'income', 'support', 'health','edu','hdi'))
+gl
+```
+
++ Analizamos el modelo GAM
+   - Resumen
+
+```{r GAM}
+
+modeloGAM <- gam(Overall ~  s(Interest) + s(Support) + s(Income) + s(Health) + s(Edu) + s(HDI), data = pisaFull)
+
+summary(modeloGAM)
+
+```
+
+  - Graficos
+  
+```{r}
+
+par(mfrow = c(2, 3))
+plot(modeloGAM)
+
+```
+
+```{r, include=FALSE}
+
+gam.check(modeloGAM)
+
+```
+
++ Elaboramos un nuevo el modelo _GAM2_
+   - Resumen
+
+```{r}
+
+modeloGAM2 <- gam(Overall ~ s(Interest) + s(Income) + Support + Health + s(Edu) + HDI, data = pisaFull)
+summary(modeloGAM2)
+
+```
+
+  - Graficos
+  
+```{r}
+
+par(mfrow = c(1, 3))
+plot(modeloGAM2)
+
+```
+
+
+```{r include=FALSE}
+
+gam.check(modeloGAM2)
+
+```
+
++ A traves de la comparacion de los modelos con la funcion AIC, el modeloGAM es mas apropiado! 
+
+```{r}
+
+AIC(modeloGAM, modeloGAM2)
+    
+```
+
+
