@@ -1,0 +1,190 @@
+---
+title: "Regularization NBA"
+author: "Inigo Martiarena Conde"
+date: "11/9/2020"
+output: 
+  html_document: default
+  pdf_document: default
+
+---
+## Objetivo
+
+¿Hay una  relación entre el performance de los jugadores de la NBA y sus salarios?
+Utilizar las técnicas de cross validation y regularización para seleccionar el mejor modelo desde un punto de vista predictivo
+
++ Librerias necesarias para el analisis:
+  - rmarkdown
+  - rsample
+  - glmnet
+  - tidyverse
+  - boot
+  - skimr
+  
+```{r Libraries, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(rmarkdown)
+library(rsample)
+library(glmnet)
+library(tidyverse)
+library(boot)
+library(skimr)
+
+```
+
++ Cargamos la base de datos _nba.csv_ y analizamos su estructura.
++ Los NA los sustituimos con valores 0.
+
+```{r Dataset}
+
+nbaRawData <- read.csv( "nba.csv")
+head(nbaRawData)
+
+```
+
++ Vemos que existen jugadores duplicados, los eliminamos.
++ Son pocos valores y no mueven la aguja a la hora de hacer el modelo.
+
+```{r include=FALSE}
+
+length(unique(nbaRawData$Player))
+length(nbaRawData$Player)
+nbaData <- nbaRawData[!duplicated(nbaRawData$Player), ]
+nbaData[is.na(nbaData)] <- 0
+
+```
+
++ Elaboramos una division del dataset con un 75% de la informacion para training y el restante 25% para test.
++ Transformamos la variable de salario en logaritmo.
+
+```{r Training & Test, echo=FALSE}
+
+dataSplit <- initial_split(data = nbaData, prop = 0.75, strata = 'Salary')
+dataTrain <- training(dataSplit)
+dataTest  <-  testing(dataSplit)
+logNBATrain <- dataTrain %>%
+  mutate(Salary = log(Salary))
+logNBATest <- dataTest %>%
+  mutate(Salary = log(Salary))
+```
+
++ Creamos las matrices junto con sus vectores de respuesta
++ Empleamos __[, -1]__ en la funcion para eliminar el intercepto
+
+```{r echo=TRUE}
+nbaTrain1 <- model.matrix(Salary ~ . -Player -NBA_Country -Tm, data = dataTrain)[, -1]
+nbaTrain2 <- log(dataTrain$Salary)
+
+nbaTest1 <- model.matrix(Salary ~ . -Player -NBA_Country -Tm, data = dataTest)[, -1]
+nbaTest2 <- logNBATest
+
+```
+
++ Comprobamos que el tamaño de ambas es el mismo. Condicion indispensable para operar entre ellas
+
+```{r include=FALSE}
+
+dim(nbaTrain1)
+length(nbaTrain2)
+
+```
+
++ Calculamos la regresion Ridge
+
+```{r Ridge regression}
+
+NBARidge <- glmnet(
+  x = nbaTrain1,
+  y = nbaTrain2,
+  alpha = 0
+)
+
+```
+
++ Calculamos la regresion Lasso
+
+```{r Lasso regresion}
+
+NBALasso <- glmnet(
+  x = nbaTrain1,
+  y = nbaTrain2,
+  alpha = 1
+)
+
+```
+
++ Calculamos la Elastic net
+
+```{r Elastic net}
+
+NBAElas1 <- glmnet(nbaTrain1,nbaTrain2, alpha = 0.25)
+NBAElas2 <- glmnet(nbaTrain1,nbaTrain2, alpha = 0.75)
+
+```
+
++ Graficamos las distintas regresiones 
+
+```{r Ridge, Lasso and Elastic net plots}
+par(mfrow = c(2,2), mar = c(6,4,6,2) + 0.1)
+plot(NBARidge, main = "Ridge (Alpha = 0)\n\n\n")
+plot(NBALasso, main = "Lasso (Alpha = 1)\n\n\n")
+plot(NBAElas1, main = "Elastic net (Alpha = 0.25)\n\n\n")
+plot(NBAElas2, main = "Elastic net (Alpha = 0.75)\n\n\n")
+
+```
+
++ A traves del Cross Validation vamos a encontrar la mejor combinacion para el alpha de las regresiones
+
+```{r include = FALSE}
+
+folds <- sample(1:20, size = length(nbaTrain2), replace = TRUE)
+tuning_grid <- tibble::tibble(
+  alpha       = seq(0,1, by = .05),
+  mse_min     = NA,
+  mse_1se     = NA,
+  lambda_min  = NA,
+  lambda_1se  = NA
+)
+
+tuning_grid
+```
+
+```{r}
+
+for(i in seq_along(tuning_grid$alpha)) {
+  
+  #Metemos el modelo para cada valor de alpha
+  fit <- cv.glmnet(nbaTrain1, nbaTrain2, alpha = tuning_grid$alpha[i], foldid = folds)
+  
+  #Extraemos los valores lambda y MSE
+  tuning_grid$mse_min[i] <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i] <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+  
+}
+
+tuning_grid
+```
+
++ El lambda mas pequeño se corresponde con el alpha mas alto en este caso (1) lo que corresponde a la regresion Lasso.
+
+```{r Lasso regression Cross Validation}
+
+NBALassoCV <- cv.glmnet(
+  x = nbaTrain1,
+  y = nbaTrain2,
+  alpha = 1
+)
+
+min(NBALassoCV$cvm)
+
+```
+
+
+```{r Prediction }
+
+prediction <- predict(NBALassoCV, s = NBALassoCV$lambda.min, nbaTest1)
+
+```
+
+
