@@ -1,0 +1,186 @@
+---
+title: "Informe ventas de apple"
+author: "Inigo Martiarena Conde"
+date: "11/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## Objetivo
+
+Hacer una prediccion de las ventas de Apple para los proximos trimestres. Emplear los modelos de prediccion ETS y ARIMA para elegir el que mas capacidad de prediccion tiene
+
+## Librerias
+
+  + dplyr
+  + forecast
+  + xts
+  + ggplot2
+  + ggfortify
+  + lubridate
+
+```{r libraries}
+
+library(dplyr)
+library(forecast) 
+library(xts) 
+library(ggplot2)
+library(ggfortify)
+library(lubridate)
+
+```
+
+## Data
+
+Tenemos los datos de las ventas de apple para 38 trimestres, desde Q2 de 2008 a Q3 del 2017. Hay 38 observaciones y dos variables. Realizamos un cambio en el formato del dataset con la libretia xts para tener la informacion en series temporales
+
+```{r dataset}
+
+data <- read.csv2("./IngresosApple.csv",  row.names = "Trimestre")
+head(data)
+```
+
+```{r include=FALSE}
+
+fechas <- seq(as.Date("2008-04-01"), as.Date("2017-09-30"), by = "quarter")
+fechas
+df <- mutate(data, fecha = fechas)
+str(df)
+
+```
+
+Se puede apreciar que las ventas de Apple presentan una tendencia creciente y estacionalidad
+
+Podemos comprobar que se trata de una serie temporal no estacionaria ni en media ni en varianza
+
+```{r}
+
+Ventas <-  xts(df$Ingresos, order.by = as.Date(df$fecha,"%Y/%m/%d"),frequency = 4)
+Ventas <- to.quarterly(Ventas)
+zVentas = as.zoo(Ventas$Ventas.Close)
+autoplot(as.xts(zVentas)) +
+  ggtitle("Ventas Trimestrales Apple") +
+  xlab("Trimestres") +
+  ylab("Ventas") +
+  theme_minimal()
+
+```
+
+Vamos a realizar una transformacion de la para conseguir que sea estacionaria en varianza. Para ello, realizaremos una transformacion logaritmica
+
+```{r}
+
+# Log transformation
+zlVentas <- log(zVentas)
+df_newl <- data.frame(value = as.vector(zlVentas),
+                     time = time(zlVentas))
+ggplot(df_newl) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value)) + ylab("Ventas") + ggtitle("Ventas Trimestrales LOG Apple") + xlab("Trimestres")
+
+
+```
+
+Partimos al informacion por cuatrimestres de los diferentes años para analizar con mas detalle la estacionalidad de las ventas a lo largo del año. El ultimo cuatrismestre es superior al resto de ventas del año
+
+```{r}
+
+tsVentas <- ts(coredata(zVentas), start = c(2008, 2), frequency = 4)
+ggfreqplot(tsVentas,
+           freq = 4,
+           nrow = 1,
+           facet.labeller = c("Q1","Q2","Q3","Q4")) +
+  ggtitle("Ventas por trimestres de Apple") +
+  theme_minimal()
+
+```
+
+```{r include=FALSE}
+
+stl(tsVentas[, 1], s.window = "periodic")
+plot(stl(tsVentas[, 1], s.window = "periodic"))
+
+```
+
+### Modelo ETS
+
+Eliminamos los 3 ultimos trimestres para el analisis
+
+Estimamos y predecimos con modelo no estacionales. De las 15 posibilidades de modelos ETS que existen, somos capaces de saber cual es el idoneo de manera automatica a traves de las funciones _ets_ y _forecast_. Concluimos que el mejor modelo es el multiplicativo con estacionalidad aditiva (M,A,M)
+Los sombreados en gris corresponden a los respectivos intervalos de confianza del 80% y 95%
+
+```{r}
+
+Omitimos <- 3
+Observaciones <- length(zVentas)
+oVentas <- window(zVentas,start = index(zVentas[1]),end = index(zVentas[Observaciones - Omitimos]))
+
+
+```
+
+```{r include=FALSE}
+
+etsfit <- ets(oVentas)
+fventas.ets = forecast::forecast(etsfit)
+etsfit$method
+summary(fventas.ets)
+
+```
+
+
+```{r}
+
+plot(fventas.ets)
+lines(window(zVentas),type = "o") +
+  theme_minimal()
+
+```
+
+### Modelo ARIMA
+
+Es un modelo estadístico que utiliza variaciones y regresiones de datos estadísticos con el fin de encontrar patrones para una predicción hacia el futuro, es decir, que las estimaciones futuras vienen explicadas por los datos del pasado y no por variables independientes.
+A continuación, debemos eliminar la parte no estacionaria de ARIMA. Para facilitar el análisis aquí, también eliminaremos la parte estacional de los datos
+
+```{r}
+
+Omitimos <- 3
+Observaciones = length(zVentas)
+oVentas <- window(zVentas,start = index(zVentas[1]),end = index(zVentas[Observaciones - Omitimos]))
+pVentas <- window(zVentas,start = index(zVentas[Observaciones - Omitimos + 1]),end = index(zVentas[Observaciones]))
+
+fitAr <- auto.arima(oVentas,lambda = 0)
+summary(fitAr)
+
+
+```
+
+Nos interesa que los errores tengan media y varianza cero (ruido blanco) para hacer posible la prediccion.
+
+```{r}
+
+ggtsdisplay(fitAr$residuals)
+
+```
+
+
+```{r}
+
+df_new <- data.frame(value = as.vector(zVentas),
+                     time = time(zVentas))
+
+```
+
+```{r}
+
+fventas.arima = forecast::forecast(fitAr)
+
+ggplot(df_new) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value),colour = "red") + geom_forecast(fventas.arima,alpha = 0.4) + ggtitle("ARIMA: Predicción de los ingresos de Apple") +
+  theme_minimal()
+
+```
+
+
+### Conclusion
+
+Finalmente escogemos el modelo ARIMA para la prediccion de los futuros trimestres en ventas de Apple ya que tiene un MAPE menor respecto del modelo ETS seleccionado
